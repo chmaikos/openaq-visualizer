@@ -1,0 +1,33 @@
+version: '3.8'
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+  mongodb:
+    image: mongo:6
+    ports:
+      - "27017:27017"
+  ingest:
+    build: ./ingest
+    depends_on: [rabbitmq]
+  batch_consumer:
+    build: ./batch_consumer
+    depends_on: [rabbitmq, mongodb]
+  realtime_processor:
+    build: ./realtime_processor
+    depends_on: [rabbitmq]
+  notifier:
+    build: ./notifier
+    depends_on: [rabbitmq]
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    depends_on: [rabbitmq, mongodb]
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on: [backend]

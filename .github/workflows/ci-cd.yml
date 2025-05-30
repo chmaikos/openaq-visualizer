@@ -1,0 +1,60 @@
+name: CI/CD Pipeline
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    services:
+      rabbitmq:
+        image: rabbitmq:3-management
+        ports:
+          - 5672:5672
+      mongodb:
+        image: mongo:6
+        ports:
+          - 27017:27017
+    strategy:
+      matrix:
+        component: [ ingest, batch_consumer, realtime_processor, notifier, backend, frontend ]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        if: matrix.component != 'frontend'
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Set up Node.js
+        if: matrix.component == 'frontend'
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: Build and Test ${{ matrix.component }}
+        working-directory: ./${{ matrix.component }}
+        run: |
+          if [ "${{ matrix.component }}" = "frontend" ]; then
+            yarn install && yarn build;
+          else
+            pip install -r requirements.txt;
+          fi
+      - name: Lint ${{ matrix.component }}
+        working-directory: ./${{ matrix.component }}
+        run: |
+          if [ "${{ matrix.component }}" = "frontend" ]; then
+            yarn lint;
+          else
+            pip install flake8 && flake8 .;
+          fi
+  docker_deploy:
+    needs: build_and_test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build and push Docker images
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: docker-compose.yml
+          push: false
