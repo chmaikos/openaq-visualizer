@@ -1,0 +1,19 @@
+/* Βεβαιώσου ότι html, body και #root έχουν ύψος 100% */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* Η κλάση .map πρέπει να καλύπτει όλο το ύψος του viewport */
+.map {
+  height: 100%;
+  width: 100%;
+}
+
+/* Προαιρετικά, μπορείς να ορίσεις ένα background color */
+body {
+  background-color: #000;
+}
+
+/* Αν χρειάζεσαι κάποιο overlay ή επιπλέον styling, πρόσθεσέ το εδώ */

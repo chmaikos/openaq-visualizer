@@ -1,7 +1,12 @@
 FROM node:24-alpine
 WORKDIR /app
-COPY package.json yarn.lock ./
+# Copy manifest and config
+COPY package.json tsconfig.json index.html ./
+# Install dependencies
 RUN yarn install --frozen-lockfile
-COPY . .
+# Copy source code
+COPY src/ ./src/
+# Build the app
 RUN yarn build
+# Serve the built app
 CMD ["yarn","preview","--host","0.0.0.0","--port","3000"]

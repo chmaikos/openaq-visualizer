@@ -1,33 +1,74 @@
-version: '3.8'
 services:
   rabbitmq:
     image: rabbitmq:3-management
     ports:
       - "5672:5672"
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   mongodb:
     image: mongo:6
     ports:
       - "27017:27017"
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    ports:
+      - "1883:1883"   # Standard MQTT
+      - "9001:9001"   # MQTT over WebSocket
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      
   ingest:
     build: ./ingest
-    depends_on: [rabbitmq]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    entrypoint: ["python", "ingest.py"]
+
   batch_consumer:
     build: ./batch_consumer
-    depends_on: [rabbitmq, mongodb]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    entrypoint: ["python", "batch_consumer.py"]
+
   realtime_processor:
     build: ./realtime_processor
-    depends_on: [rabbitmq]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    entrypoint: ["python", "realtime_processor.py"]
+
   notifier:
     build: ./notifier
-    depends_on: [rabbitmq]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    entrypoint: ["python", "notifier.py"]
+
   backend:
     build: ./backend
     ports:
       - "8000:8000"
-    depends_on: [rabbitmq, mongodb]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    entrypoint: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
   frontend:
     build: ./frontend
     ports:
       - "3000:3000"
-    depends_on: [backend]
+    entrypoint: ["yarn", "preview", "--host", "0.0.0.0", "--port", "3000"]
