@@ -10,24 +10,30 @@ services:
       timeout: 5s
       retries: 5
   mongodb:
-    image: mongo:6
+    image: mongo:6.0
     ports:
       - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
       retries: 5
-  mosquitto:
+  mqtt:
     image: eclipse-mosquitto:2.0
     ports:
       - "1883:1883"   # Standard MQTT
       - "9001:9001"   # MQTT over WebSocket
     volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mqtt/config:/mosquitto/config
+      - mqtt_data:/mosquitto/data
+      - mqtt_log:/mosquitto/log
       
   ingest:
     build: ./ingest
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -35,6 +41,9 @@ services:
 
   batch_consumer:
     build: ./batch_consumer
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - MONGODB_URI=mongodb://mongodb:27017/
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -44,15 +53,26 @@ services:
 
   realtime_processor:
     build: ./realtime_processor
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - MQTT_BROKER=mqtt
+      - MQTT_PORT=1883
     depends_on:
       rabbitmq:
         condition: service_healthy
+      mqtt:
+        condition: service_started
     entrypoint: ["python", "realtime_processor.py"]
 
   notifier:
     build: ./notifier
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - MONGODB_URI=mongodb://mongodb:27017/
     depends_on:
       rabbitmq:
+        condition: service_healthy
+      mongodb:
         condition: service_healthy
     entrypoint: ["python", "notifier.py"]
 
@@ -60,15 +80,30 @@ services:
     build: ./backend
     ports:
       - "8000:8000"
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/
+      - MQTT_BROKER=mqtt
+      - MQTT_PORT=1883
+      - MQTT_WS_PORT=9001
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       mongodb:
         condition: service_healthy
+      mqtt:
+        condition: service_started
     entrypoint: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
   frontend:
     build: ./frontend
     ports:
       - "3000:3000"
-    entrypoint: ["yarn", "preview", "--host", "0.0.0.0", "--port", "3000"]
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - VITE_MQTT_WS_URL=ws://localhost:9001
+    depends_on:
+      - backend
+    entrypoint: ["nginx", "-g", "daemon off;"]
+
+volumes:
+  mongodb_data:
+  mqtt_data:
+  mqtt_log:

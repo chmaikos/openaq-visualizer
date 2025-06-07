@@ -2,35 +2,83 @@
 import React, { useEffect, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
+import { Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend
+} from 'chart.js';
 
-// Import της browser‐έκδοσης του MQTT client
-import mqtt, { MqttClient } from "mqtt/dist/mqtt.js";
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend
+);
+
+// Import MQTT client
+import mqtt from "mqtt";
+
+import AlertHistory from './components/AlertHistory';
+import UserPreferences from './components/UserPreferences';
 
 import "leaflet/dist/leaflet.css";
 import "./App.css";
 
+// Fix Leaflet default icon issue
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
+
 interface AQPoint {
-  lat:       number;
-  lon:       number;
-  pm25:      number;
-  unit?:     string;
+  lat: number;
+  lon: number;
+  pm25: number;
+  unit?: string;
   timestamp: string | null;
+  severity?: string;
+  threshold?: number;
+  description?: string;
 }
+
+const severityColors = {
+  info: "#3498db",     // Blue
+  warning: "#f1c40f",  // Yellow
+  alert: "#e67e22",    // Orange
+  critical: "#e74c3c", // Red
+} as const;
+
+type SeverityLevel = keyof typeof severityColors;
 
 function App() {
   const [data, setData] = useState<AQPoint[]>([]);
-  const [client, setClient] = useState<MqttClient | null>(null);
+  const [client, setClient] = useState<mqtt.MqttClient | null>(null);
+  const [selectedPoint, setSelectedPoint] = useState<AQPoint | null>(null);
+  const [showPreferences, setShowPreferences] = useState(false);
+  const [isMapReady, setIsMapReady] = useState(false);
 
   useEffect(() => {
-    // Διαβάζουμε URL MQTT broker‐over‐WebSocket από το env
+    // Get MQTT broker WebSocket URL from env
     const wsUrl = import.meta.env.VITE_MQTT_WS_URL ?? "ws://localhost:9001";
 
-    // Συνδεόμαστε στο broker μέσω WebSocket
+    // Connect to broker via WebSocket
     const mqttClient = mqtt.connect(wsUrl);
 
     mqttClient.on("connect", () => {
       console.log("[MQTT] Connected to broker via WebSocket:", wsUrl);
-      // Subscribe στο topic "alerts"
+      // Subscribe to "alerts" topic
       mqttClient.subscribe("alerts", { qos: 0 }, (err) => {
         if (err) {
           console.error("[MQTT] Subscribe error:", err);
@@ -38,27 +86,30 @@ function App() {
       });
     });
 
-    mqttClient.on("message", (_, messageBuffer) => {
+    mqttClient.on("message", (topic: string, message: Buffer) => {
       try {
-        const payload = JSON.parse(messageBuffer.toString()) as any;
+        const payload = JSON.parse(message.toString()) as AQPoint;
         const lat = payload.lat;
         const lon = payload.lon;
         const pm25 = payload.pm25;
         const unit = payload.unit;
         const timestamp = payload.timestamp;
+        const severity = payload.severity;
+        const threshold = payload.threshold;
+        const description = payload.description;
 
-        setData((prev) => {
-          // Αν υπάρχει ήδη marker με αυτό το lat/lon, κάνουμε update
+        setData((prev: AQPoint[]) => {
+          // If marker with this lat/lon exists, update it
           const idx = prev.findIndex(
             (pt) => pt.lat === lat && pt.lon === lon
           );
           if (idx >= 0) {
             const updated = [...prev];
-            updated[idx] = { lat, lon, pm25, unit, timestamp };
+            updated[idx] = { lat, lon, pm25, unit, timestamp, severity, threshold, description };
             return updated;
           } else {
-            // Προσθέτουμε νέο σημείο
-            return [...prev, { lat, lon, pm25, unit, timestamp }];
+            // Add new point
+            return [...prev, { lat, lon, pm25, unit, timestamp, severity, threshold, description }];
           }
         });
       } catch (err) {
@@ -77,10 +128,12 @@ function App() {
     };
   }, []);
 
-  // Triangular icon factory, ανά PM2.5 value
-  const iconFor = (val: number) => {
-    const t = Math.min(1, val / 50);
-    const color = `rgb(${Math.floor(255 * t)},${Math.floor(255 * (1 - t))},0)`;
+  // Triangular icon factory, based on PM2.5 value and severity
+  const iconFor = (point: AQPoint) => {
+    const color = point.severity && point.severity in severityColors
+      ? severityColors[point.severity as SeverityLevel]
+      : `rgb(${Math.floor(255 * Math.min(1, point.pm25 / 50))},${Math.floor(255 * (1 - Math.min(1, point.pm25 / 50)))},0)`;
+    
     return L.divIcon({
       html: `<svg width="24" height="24" viewBox="0 0 10 10">
                <path d="M5 0 L10 10 L0 10 Z" fill="${color}" />
@@ -93,24 +146,87 @@ function App() {
   };
 
   return (
-    <MapContainer center={[20, 0]} zoom={2} className="map">
-      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-      {data.map((pt, idx) => (
-        <Marker
-          key={`${pt.lat}-${pt.lon}`}
-          position={[pt.lat, pt.lon]}
-          icon={iconFor(pt.pm25)}
+    <div className="app-container">
+      <div className="map-container">
+        <MapContainer 
+          center={[20, 0]} 
+          zoom={2} 
+          className="map"
+          whenReady={() => setIsMapReady(true)}
         >
-          <Popup>
-            PM2.5: {pt.pm25.toFixed(1)} {pt.unit || "µg/m³"}
-            <br />
-            {pt.timestamp
-              ? new Date(pt.timestamp).toLocaleString()
-              : "—"}
-          </Popup>
-        </Marker>
-      ))}
-    </MapContainer>
+          <TileLayer 
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          />
+          {data.map((pt) => (
+            <Marker
+              key={`${pt.lat}-${pt.lon}`}
+              position={[pt.lat, pt.lon]}
+              icon={iconFor(pt)}
+              eventHandlers={{
+                click: () => setSelectedPoint(pt)
+              }}
+            >
+              <Popup>
+                {pt.severity && (
+                  <>
+                    <strong>Severity: {pt.severity.toUpperCase()}</strong>
+                    <br />
+                  </>
+                )}
+                PM2.5: {pt.pm25.toFixed(1)} {pt.unit || "µg/m³"}
+                {pt.threshold && (
+                  <>
+                    <br />
+                    Threshold: {pt.threshold} {pt.unit || "µg/m³"}
+                  </>
+                )}
+                {pt.description && (
+                  <>
+                    <br />
+                    {pt.description}
+                  </>
+                )}
+                <br />
+                {pt.timestamp
+                  ? new Date(pt.timestamp).toLocaleString()
+                  : "—"}
+              </Popup>
+            </Marker>
+          ))}
+        </MapContainer>
+      </div>
+
+      <div className="controls">
+        <button
+          className="preferences-btn"
+          onClick={() => setShowPreferences(!showPreferences)}
+        >
+          {showPreferences ? "Hide Preferences" : "Show Preferences"}
+        </button>
+      </div>
+
+      {showPreferences && (
+        <div className="preferences-panel">
+          <UserPreferences />
+        </div>
+      )}
+
+      {selectedPoint && (
+        <div className="details-panel">
+          <button
+            className="close-btn"
+            onClick={() => setSelectedPoint(null)}
+          >
+            ×
+          </button>
+          <AlertHistory
+            lat={selectedPoint.lat}
+            lon={selectedPoint.lon}
+          />
+        </div>
+      )}
+    </div>
   );
 }
 

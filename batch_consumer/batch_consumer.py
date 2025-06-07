@@ -25,7 +25,7 @@ def callback(ch, method, properties, body):
     rec = json.loads(body)
     lat = rec.get("lat")
     lon = rec.get("lon")
-    # Skip αν δεν υπάρχουν lat/lon
+    # Skip if no lat/lon
     if lat is None or lon is None:
         return ch.basic_ack(delivery_tag=method.delivery_tag)
 

@@ -33,7 +33,7 @@ while True:
         coords = item.get("coordinates") or {}
         lat = coords.get("latitude")
         lon = coords.get("longitude")
-        # Αν δεν έχουν γεωγραφικές συντεταγμένες, αγνοούμε
+        # Ignore if no coordinates
         if lat is None or lon is None:
             continue
 

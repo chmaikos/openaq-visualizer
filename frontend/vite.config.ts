@@ -1,38 +1,52 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-
-// Εισάγουμε τους polyfill plugins για Esbuild
 import { NodeGlobalsPolyfillPlugin } from '@esbuild-plugins/node-globals-polyfill';
 import { NodeModulesPolyfillPlugin } from '@esbuild-plugins/node-modules-polyfill';
 
+// https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    NodeGlobalsPolyfillPlugin({
+      process: true,
+      buffer: true,
+    }),
+    NodeModulesPolyfillPlugin(),
+  ],
   resolve: {
     alias: {
-      // Όταν συναντάται το import "buffer", πηγαίνουμε στο node_modules/buffer
+      process: 'process/browser',
+      stream: 'stream-browserify',
+      zlib: 'browserify-zlib',
+      util: 'util',
       buffer: 'buffer',
     },
   },
   optimizeDeps: {
     esbuildOptions: {
-      // Προσθέτουμε global = globalThis, και ένα dummy process.env για να μην σπάει
       define: {
         global: 'globalThis',
-        'process.env': '{}',
       },
-      // Προσθέτουμε τα Esbuild plugins για polyfilling
-      plugins: [
-        NodeGlobalsPolyfillPlugin({
-          buffer: true,
-          process: true,
-        }),
-        NodeModulesPolyfillPlugin()
-      ],
     },
   },
-  build: {
-    rollupOptions: {
-      // Αν χρησιμοποιείτε επιπλέον Node modules, εδώ μπορείτε να ορίσετε polyfills κι άλλα
-    }
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://backend:8000',
+        changeOrigin: true,
+        secure: false,
+        configure: (proxy, _options) => {
+          proxy.on('error', (err, _req, _res) => {
+            console.log('proxy error', err);
+          });
+          proxy.on('proxyReq', (proxyReq, req, _res) => {
+            console.log('Sending Request to the Target:', req.method, req.url);
+          });
+          proxy.on('proxyRes', (proxyRes, req, _res) => {
+            console.log('Received Response from the Target:', proxyRes.statusCode, req.url);
+          });
+        },
+      },
+    },
   },
 });
